@@ -3,11 +3,14 @@ class ChessBoard{
     constructor(){
         this.board = Array(8).fill().map(() => Array(8).fill(null));
         this.turn = 'white';
+        this.whiteSide = new ChessSide('white');
+        this.blackSide = new ChessSide('black');
         this.selectedPiece = null;
         this.initialiseBoard();
-        this.check = false;
-        this.gameOver = this.isGameOver;
-        this.result = 'pending';
+        
+        // this.check = false;
+        // this.gameOver = this.isGameOver;
+        // this.result = 'pending';
     }
     getSquare(row, col){
         return this.board[row][col];
@@ -19,17 +22,10 @@ class ChessBoard{
         }
         return 'Out of Bounds';
     }
+    
     getKingSquare(){
-        for(let row=0; row<8; row++){
-            for(let col = 0;col<8;col++){
-                const piece = this.board[row][col];
-                if(piece && piece.type==='king' && piece.color===this.turn){
-                    return {row,col};
-                }
-            }
-        }
-        // DANGER DANGER
-        return null;
+        const currentSide = this.turn === 'white' ? this.whiteSide : this.blackSide;
+        return currentSide.kingPosition;
     }
 
     // ===========================================
@@ -37,8 +33,18 @@ class ChessBoard{
     // ===========================================
     updateInfoPanel(){
         const turnIndicator = document.getElementById('turnIndicator');
+        if(this.isGameOver){
+            turnIndicator.className = `Game over ${this.gameResult} `;
+            if(this.gameResult==='CheckMate'){
+                const winner = (this.turn === 'white') ? 'black' : 'white';
+                console.log(`Winner of this game is ${winner} by ${this.gameResult}`);
+            }
+        }
+
         turnIndicator.textContent = `${this.turn.charAt(0).toUpperCase() + this.turn.slice(1)}'s Turn`;
         turnIndicator.className = `turn-indicator ${this.turn}-turn`;
+
+
 
         const checkStatus = this.isCheck();
         if(checkStatus){
@@ -68,19 +74,13 @@ class ChessBoard{
 
 
     initialiseBoard() {
-        const backRank = ['rook', 'knight', 'bishop', 'queen', 'king', 'bishop', 'knight', 'rook'];
-
-        for (let i = 0; i < 8; i++) {
-            // white pieces
-            this.board[0][i] = new ChessPiece(backRank[i], 'white', 0, i);
-            this.board[1][i] = new ChessPiece('pawn', 'white', 1, i);
-
-            // black pieces
-            this.board[6][i] = new ChessPiece('pawn', 'black', 6, i);
-            this.board[7][i] = new ChessPiece(backRank[i], 'black', 7, i);
-        }
+        this.whiteSide.initialisePieces(this.board);
+        this.blackSide.initialisePieces(this.board);
         
-        // Calculate initial legal moves for white
+        // Calculate attacked squares for both sides
+        this.whiteSide.updateAttackedSquares(this);
+        this.blackSide.updateAttackedSquares(this);
+        
         this.calculateAllLegalMoves();
         this.updateInfoPanel();
     }
@@ -130,6 +130,7 @@ class ChessBoard{
             }
         }
     }
+
     showAvailableMoves(selectedPiece){
     // First clear any existing highlights
         document.querySelectorAll('.square').forEach(square => {
@@ -172,83 +173,94 @@ class ChessBoard{
     // =========GAME PLAY FUNCTIONS==============
     // ===========================================
     isCheck() {
-        const enemy = (this.turn === 'white') ? 'black' : 'white';
-        const kingSquare = this.getKingSquare();       
-        if (!kingSquare) return false;
-        
+        const currentSide = this.turn === 'white' ? this.whiteSide : this.blackSide;
+        const opponent = this.turn === 'white' ? this.blackSide : this.whiteSide;
 
-        // Check if any enemy piece can capture the king using their pre-calculated moves
-        for (let row = 0; row < 8; row++) {
-            for (let col = 0; col < 8; col++) {
-                const piece = this.board[row][col];
-
-                if (piece && piece.color === enemy) {
-                    const potentMoves = piece.getPotentialMoves(this);
-
-
-                    const kingCheck = potentMoves.some(move =>
-                        move.row === kingSquare.row && move.col === kingSquare.col
-                    );
-                    if (kingCheck) return true;
-                }
-            }
-        }
-        return false;
+        return currentSide.isInCheck(opponent);
     }
+
     // Calculating legal moves for all pieces  - Method is innefficient this is brute force method for now
     calculateAllLegalMoves() {
-       
         // Calculate fresh moves for all pieces of current turn
         for (let row = 0; row < 8; row++) {
             for (let col = 0; col < 8; col++) {
                 const piece = this.board[row][col];
                 if (piece) {
-                    piece.allMoves=[];
+                    piece.allMoves = [];
                     piece.calculateAvailableMoves(this);
                 }
             }
         }
+        
+        // Update attacked squares for BOTH sides after moves are calculated
+        this.whiteSide.updateAttackedSquares(this);
+        this.blackSide.updateAttackedSquares(this);        
     }
 
-    wouldResultInCheck(fromRow, fromCol, toRow, toCol){
+    wouldResultInCheck(fromRow, fromCol, toRow, toCol) {
         const movingPiece = this.board[fromRow][fromCol];
-        if(!movingPiece) return false;
+        if (!movingPiece) return false;
 
-
-        const newSquare = this.board[toRow][toCol]; // in case another piece is here (capture)
         const movingColor = movingPiece.color;
-        // make changes temporily to test w/out rendering
+        const movingSide = movingColor === 'white' ? this.whiteSide : this.blackSide;
+        const opponentSide = movingColor === 'white' ? this.blackSide : this.whiteSide;
 
-        this.board[toRow][toCol] = movingPiece;
-        this.board[fromRow][fromCol] = null;
+        // Special case: if moving the king, just check if destination is attacked
+        if (movingPiece.type === 'king') {
+            return opponentSide.isSquareAttacked(toRow, toCol);
+        }
 
-        // store original position
+        // For non-king pieces: check if king would be in check after move
+        const targetPiece = this.board[toRow][toCol];
         const oldRow = movingPiece.row;
         const oldCol = movingPiece.col;
-                // NEED SPECIAL HANDLING IF PIECE BEING MOVE IS THE KING
-        movingPiece.row=toRow;
-        movingPiece.col=toCol;
+        const oldKingPos = {...movingSide.kingPosition};
 
-        const originalTurn = this.turn;
-        this.turn = movingColor;
+        // Simulate the move
+        this.board[toRow][toCol] = movingPiece;
+        this.board[fromRow][fromCol] = null;
+        movingPiece.row = toRow;
+        movingPiece.col = toCol;
 
-        const wouldBeInCheck = this.isCheck();
-        
-        // Undo temp move
-        this.turn = originalTurn;
+        // If we captured a piece, remove it temporarily
+        if (targetPiece) {
+            const targetSide = targetPiece.color === 'white' ? this.whiteSide : this.blackSide;
+            const index = targetSide.pieces.indexOf(targetPiece);
+            if (index > -1) targetSide.pieces.splice(index, 1);
+        }
+
+        // Update attacked squares for opponent (fast - just recalc their attacks)
+        opponentSide.updateAttackedSquares(this);
+
+        // Check if king is in check
+        const wouldBeInCheck = opponentSide.isSquareAttacked(
+            movingSide.kingPosition.row, 
+            movingSide.kingPosition.col
+        );
+
+        // Undo the move
+        this.board[fromRow][fromCol] = movingPiece;
+        this.board[toRow][toCol] = targetPiece;
         movingPiece.row = oldRow;
         movingPiece.col = oldCol;
-        this.board[toRow][toCol] = newSquare;
-        this.board[fromRow][fromCol] = movingPiece;
+
+        // Restore captured piece if any
+        if (targetPiece) {
+            const targetSide = targetPiece.color === 'white' ? this.whiteSide : this.blackSide;
+            targetSide.pieces.push(targetPiece);
+        }
+
+        // Restore original attacked squares (recalc both sides)
+        this.whiteSide.updateAttackedSquares(this);
+        this.blackSide.updateAttackedSquares(this);
 
         return wouldBeInCheck;
-
     }
 
     // MAKING A MOVE - thats the point of the game
     makeMove(fromRow, fromCol, toRow, toCol) {
         const piece = this.board[fromRow][fromCol];
-        if (!piece || piece.availableMoves.length == 0) return false;
+        if (!piece || piece.availableMoves.length === 0) return false;
 
         const isValidMove = piece.availableMoves.some(move =>
             move.row === toRow && move.col === toCol
@@ -256,47 +268,62 @@ class ChessBoard{
         if (!isValidMove) return false;
         if (this.wouldResultInCheck(fromRow, fromCol, toRow, toCol)) return false;
         
+        // Get the sides
+        const movingSide = piece.color === 'white' ? this.whiteSide : this.blackSide;
+        const opponentSide = piece.color === 'white' ? this.blackSide : this.whiteSide;
+        
+        // Handle capture - remove captured piece from opponent's side
+        const capturedPiece = this.board[toRow][toCol];
+        if (capturedPiece) {
+            opponentSide.removePiece(capturedPiece);
+        }
+        
         // Execute the move
         this.board[toRow][toCol] = piece;
         this.board[fromRow][fromCol] = null;
+        
+        // Update piece position in ChessSide
+        movingSide.updatePiecePosition(fromRow, fromCol, toRow, toCol);
         piece.hasMoved = true;
-        piece.row = toRow;
-        piece.col = toCol;
         
         // Switch turn
-        this.turn = (this.turn === 'white') ? 'black' : 'white';
+        this.turn = this.turn === 'white' ? 'black' : 'white';
         
-        // CRITICAL: Calculate all legal moves for the new turn
-        this.calculateAllLegalMoves();
+        // CRITICAL: Update ALL calculations for the new position
+        this.calculateAllLegalMoves();  // This now updates attacked squares for both sides
         
-        // Now check if the new turn's king is in check
-        this.selectedPiece=null;
+        // Check game over conditions
+        if (this.isGameOver()) {
+            const gameResult = this.getGameResult();
+            console.log(`Game Over: ${gameResult}`);
+        }
+        
+        this.selectedPiece = null;
         this.updateInfoPanel();
-
-        
         
         return true;
     }
-    isGameOver(){
-        for(let row=0; row<8; row++){
-            for(let col=0; col<8; col++){
-                const piece = this.board[row][col];
-                if(piece && piece.color === this.turn && piece.availableMoves.length>0){
-                    return false;
-                }
+
+    isGameOver() {
+        const currentSide = this.turn === 'white' ? this.whiteSide : this.blackSide;
+        
+        // Check if current side has any legal moves
+        for (const piece of currentSide.pieces) {
+            if (piece.availableMoves && piece.availableMoves.length > 0) {
+                return false;
             }
         }
         return true;
     }
-    gameResult(){
-        if(gameOver){
-            if(isCheck){
-                this.gameResult='CheckMate';
-            }else{
-                this.gameResult='StaleMate';
-            }
-        }else{
-            this.gameResult='pending';
+
+    getGameResult() {
+        const currentSide = this.turn === 'white' ? this.whiteSide : this.blackSide;
+        const opponent = this.turn === 'white' ? this.blackSide : this.whiteSide;
+        
+        if (currentSide.isInCheck(opponent)) {
+            return 'Checkmate';
+        } else {
+            return 'Stalemate';
         }
     }
 }
