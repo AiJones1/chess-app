@@ -82,7 +82,7 @@ class ChessPiece{
     }
 
     addMove(row, col, board){
-        this.allMoves.push({row, col}); 
+        this.allMoves.push({row,col});
     }
 
     calculateLegalMoves(board){
@@ -98,20 +98,80 @@ class ChessPiece{
 
 // FUNCTIONS to work out available moves for pieces
     pawnMoves(board){
-        // Need special handling for enpassant and diag captures
-        // Double move
+        const direction = this.color === 'white' ? +1 : -1;
+        const startRow = this.color === 'white' ? 1 : 6;
+        const curRow = this.row;
+        const curCol = this.col;
 
-        // special handling if makes to last row
-        let r = (this.color === 'white') ? this.row +1 : this.row -1;
-        if(board.getPieceAt(r,this.col)===null){
-            this.addMove(r, this.col, board);
-            if(!this.hasMoved){
-                r = (this.color==='white') ? this.row +2 : this.row -2;
-                if(board.getPieceAt(r, this.col)===null){
-                    this.addMove(r, this.col, board);
+        const promotionRow = this.color === 'white' ? 7 : 0;
+        if (curRow === promotionRow) {
+            return; // Pawn on promotion rank - no moves to generate
+        }
+
+        const oneStepRow = curRow + direction;
+        
+        // Move forward one square
+        if(board.getPieceAt(oneStepRow, curCol) === null){
+            this.addMove(oneStepRow, curCol, board);
+            
+            // Move forward two squares from starting position
+            const twoStepRow = curRow + (direction * 2);
+            if(board.getPieceAt(twoStepRow, curCol) === null && curRow === startRow){
+                this.addMove(twoStepRow, curCol, board);
+            }
+        }
+
+        // Diagonal captures
+        const captureCols = [curCol + 1, curCol - 1];
+
+        for(const capCol of captureCols){
+            if(capCol >= 0 && capCol < 8){
+                const targetPiece = board.getPieceAt(oneStepRow, capCol);
+
+                // Regular capture
+                if(targetPiece && targetPiece.color !== this.color){
+                    this.addMove(oneStepRow, capCol, board);
+                }
+                
+                // EN PASSANT CHECK
+                const opponent = this.color === 'white' ? board.blackSide : board.whiteSide;
+                const lastMove = opponent.getLastMove();
+                
+                // En Passant Conditions:
+                // 1. Last move was a pawn
+                // 2. That pawn started in this column (adjacent)
+                // 3. That pawn ended on our current row
+                // 4. That pawn moved 2 squares
+                if(lastMove && 
+                lastMove.pieceType === 'pawn' &&
+                lastMove.fromCol === capCol && 
+                lastMove.toRow === curRow &&
+                Math.abs(lastMove.toRow - lastMove.fromRow) === 2) {
+                    
+                    console.log(`✅ EN PASSANT VALID at (${oneStepRow},${capCol})`);
+                    // Add en passant move as an object with properties
+                    this.allMoves.push({
+                        row: oneStepRow,
+                        col: capCol,
+                        isEnPassant: true
+                    });
                 }
             }
         }
+    }
+    getPawnAttacks() {
+        const attacks = [];
+        const direction = this.color === 'white' ? 1 : -1;
+        const attackRow = this.row + direction;
+        const attackCols = [this.col - 1, this.col + 1];
+        
+        for (const attackCol of attackCols) {
+            if (attackCol >= 0 && attackCol < 8 && attackRow >= 0 && attackRow < 8) {
+                attacks.push({row: attackRow, col: attackCol});
+            }
+        }
+        
+        return attacks;
     }
 
     knightMoves(board){
@@ -142,6 +202,30 @@ class ChessPiece{
         for(const [ dr, dc] of ChessPiece.moveDirections.royalty){
             this.addMovesInDirection(board, dr, dc, 1);
         }
+        this.addCastlingMoves(board);
+    }
+
+    addCastlingMoves(board){
+        if (!board.whiteSide || !board.blackSide) return;
+        if(this.hasMoved) return;
+
+        const side = this.color==='white'? board.whiteSide : board.blackSide;
+        const opponent = this.color==='white'? board.blackSide : board.whiteSide;
+
+        if(side.ableToCastleSide(opponent,'kingSide')){
+            this.allMoves.push({
+                row: this.row, col: this.col+2,
+                isCastling: true,
+                castlingSide: 'kingSide'
+            });
+        }
+        if(side.ableToCastleSide(opponent,'queenSide')){
+            this.allMoves.push({
+                row: this.row, col: this.col-2,
+                isCastling: true,
+                castlingSide: 'queenSide'
+            });
+        }
     }
 
     // Abstracted move function
@@ -170,8 +254,5 @@ class ChessPiece{
             newCol+=dc;
         }
     }
-
-
-
 
 }

@@ -7,6 +7,10 @@ class ChessBoard{
         this.blackSide = new ChessSide('black');
         this.selectedPiece = null;
         this.initialiseBoard();
+
+        this.promotionCallback=null;
+        this.promotingPawn=null;
+        this.promotingSide=null;
         
         // this.check = false;
         // this.gameOver = this.isGameOver;
@@ -169,6 +173,93 @@ class ChessBoard{
         });
     }
 
+    //=============Promotion UI==============
+
+    showPromotionDialog(pawn, side){
+        this.promotingPawn=pawn;
+        this.promotingSide=side;
+
+        const dialog = document.getElementById('promotion-dialog');
+        const options = document.querySelectorAll('.piece-option');
+
+        if(side.color==='black'){
+            dialog.classList.add('black-promotion');
+        }else{
+            dialog.classList.remove('black-promotion');
+        }
+
+        dialog.style.display ='flex';
+
+        this.promotionCallback = (pieceType) => {
+            this.completePromotion(pieceType);
+        };
+    }
+
+    completePromotion(pieceType){
+        document.getElementById('promotion-dialog').style.display='none';
+
+        // FIX: Check if either is missing (use ! on both)
+        if(!this.promotingPawn || !this.promotingSide) {
+            console.log('Promotion cancelled - missing pawn or side');
+            return;
+        }
+
+        console.log(`Completing promotion of ${this.promotingSide.color} pawn to ${pieceType}`);
+        
+        // Pass the board correctly
+        this.promotingSide.promotePawn(this.promotingPawn, pieceType, this.board);
+
+        this.promotionCallback = null;  // FIX: was promotionCallBack (typo)
+        this.promotingPawn = null;
+        this.promotingSide = null;
+
+        this.renderBoard();
+    }
+    // ==============GAME OVER UI================
+    showGameOverModal(result, winner = null) {
+    const dialog = document.getElementById('gameover-dialog');
+    if (!dialog) {
+        console.error('Game over dialog not found');
+        return;
+    }
+    
+    const title = document.getElementById('gameover-title');
+    const message = document.getElementById('gameover-message');
+    
+    // Set title
+    title.textContent = 'Game Over';
+    
+    // Set message based on result
+    message.className = 'gameover-message';
+    
+        if (result === 'checkmate') {
+            const winnerName = winner ? winner.charAt(0).toUpperCase() + winner.slice(1) : 'Unknown';
+            message.textContent = `Checkmate! ${winnerName} wins!`;
+            message.classList.add('checkmate');
+            
+            if (winner === 'white') {
+                message.classList.add('white-wins');
+            } else if (winner === 'black') {
+                message.classList.add('black-wins');
+            }
+        } else if (result === 'stalemate') {
+            message.textContent = 'Stalemate! The game is a draw.';
+            message.classList.add('stalemate');
+        }
+        
+        // Show dialog
+        dialog.style.display = 'flex';
+    }
+
+
+    hideGameOverModal() {
+    const dialog = document.getElementById('gameover-dialog');
+    if (dialog) {
+        dialog.style.display = 'none';
+    }
+    }
+
+
     // ==========================================
     // =========GAME PLAY FUNCTIONS==============
     // ===========================================
@@ -262,8 +353,11 @@ class ChessBoard{
         const piece = this.board[fromRow][fromCol];
         if (!piece || piece.availableMoves.length === 0) return false;
 
-        const isValidMove = piece.availableMoves.some(move =>
-            move.row === toRow && move.col === toCol
+        const move = piece.availableMoves.find(m => m.row === toRow && m.col === toCol);
+        if (!move) return false;
+
+        const isValidMove = piece.availableMoves.some(m =>
+            m.row === toRow && m.col === toCol
         );
         if (!isValidMove) return false;
         if (this.wouldResultInCheck(fromRow, fromCol, toRow, toCol)) return false;
@@ -272,8 +366,29 @@ class ChessBoard{
         const movingSide = piece.color === 'white' ? this.whiteSide : this.blackSide;
         const opponentSide = piece.color === 'white' ? this.blackSide : this.whiteSide;
         
+        const isCastlingMove = move.isCastling===true;
+        const isEnpassant = move.isEnPassant===true;
+
         // Handle capture - remove captured piece from opponent's side
-        const capturedPiece = this.board[toRow][toCol];
+
+        let capturedPiece = null;
+
+        if(isEnpassant){
+            // check for inbounds of board handled at enpassant calc
+            
+            const opponentPawnRow= fromRow;
+            const opponentPawnCol= toCol;
+
+            capturedPiece = this.board[opponentPawnRow][opponentPawnCol];
+
+            if(capturedPiece){ // Should be an unneccessary check
+                this.board[opponentPawnRow][opponentPawnCol] = null;
+                           
+            }   
+        }else{
+            // Standard Capture
+            capturedPiece = this.board[toRow][toCol];
+        }
         if (capturedPiece) {
             opponentSide.removePiece(capturedPiece);
         }
@@ -285,25 +400,71 @@ class ChessBoard{
         // Update piece position in ChessSide
         movingSide.updatePiecePosition(fromRow, fromCol, toRow, toCol);
         piece.hasMoved = true;
+
+        const pawnPromotion = (piece.type==='pawn' && movingSide.isPawnPromoting(piece));
+        // if(pawnPromotion){
+        //     movingSide.autoPromote(piece, this.board);  // Pass 'this' (the board)
+        // }
+
+        movingSide.recordMove(piece, fromRow, fromCol, toRow, toCol, capturedPiece, isCastlingMove, pawnPromotion);
+        // Also update the rook
+        if(isCastlingMove){
+            const castlingRookPiece = move.castlingSide==='kingSide' ? movingSide.kingSideRook: movingSide.queenSideRook;
+            const rookStartRow = castlingRookPiece.row;
+            const rookStartCol = castlingRookPiece.col;
+
+            const newRookCol = move.castlingSide==='kingSide'? fromCol+1 : fromCol-1; // swap with original king Piece
+
+            this.board[rookStartRow][newRookCol] = castlingRookPiece;
+            this.board[rookStartRow][rookStartCol]=null;
+
+            movingSide.updatePiecePosition(rookStartRow, rookStartCol, rookStartRow, newRookCol);
+        }
         
         // Switch turn
         this.turn = this.turn === 'white' ? 'black' : 'white';
+
         
-        // CRITICAL: Update ALL calculations for the new position
-        this.calculateAllLegalMoves();  // This now updates attacked squares for both sides
+        this.calculateAllLegalMoves();  
         
-        // Check game over conditions
+            // Check game over conditions
         if (this.isGameOver()) {
             const gameResult = this.getGameResult();
             console.log(`Game Over: ${gameResult}`);
+            
+            // Determine winner for checkmate
+            let winner = null;
+            if (gameResult === 'checkmate') {
+                winner = this.turn === 'white' ? 'black' : 'white';
+                console.log(`${winner} wins by checkmate!`);
+            } else {
+                console.log('Stalemate!');
+            }
+            
+
+            setTimeout(() => {
+                this.showGameOverModal(gameResult, winner);
+            }, 200);
+            
+            // Still update UI and return true (move was valid)
+            this.selectedPiece = null;
+            this.updateInfoPanel();
+            return true;
         }
         
         this.selectedPiece = null;
         this.updateInfoPanel();
-        
+
+        if (pawnPromotion) {
+            // Small timeout to ensure board is rendered and move is complete
+            setTimeout(() => {
+                this.showPromotionDialog(piece, movingSide);
+            }, 100);
+        }
         return true;
     }
 
+    // ============END GAME FUNCTION===============
     isGameOver() {
         const currentSide = this.turn === 'white' ? this.whiteSide : this.blackSide;
         
@@ -321,9 +482,25 @@ class ChessBoard{
         const opponent = this.turn === 'white' ? this.blackSide : this.whiteSide;
         
         if (currentSide.isInCheck(opponent)) {
-            return 'Checkmate';
+            return 'checkmate';
         } else {
-            return 'Stalemate';
+            return 'stalemate';
         }
+    }
+
+    reset() {
+        // Reinitialize the board
+        this.board = Array(8).fill().map(() => Array(8).fill(null));
+        this.turn = 'white';
+        this.whiteSide = new ChessSide('white');
+        this.blackSide = new ChessSide('black');
+        this.selectedPiece = null;
+        this.initialiseBoard();
+        
+        // Hide any open modals
+        this.hideGameOverModal();
+        
+        // Re-render
+        this.renderBoard();
     }
 }
